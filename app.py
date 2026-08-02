@@ -236,6 +236,20 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+@app.route("/square")
+def square():
+    """
+    The machine's own 2x2in panel.
+
+    A separate URL rather than sniffing the browser: the panel and a phone are
+    both small touchscreens and no header tells them apart reliably. The kiosk
+    is pointed here (see bootstrap.sh) and nothing else is, so a phone opening
+    barbot.local always gets the phone UI — and this stays openable from a
+    laptop for testing, in a window squared off to roughly 1:1.
+    """
+    return send_from_directory("static", "square.html")
+
+
 @app.route("/api/state")
 def state():
     recipes = []
