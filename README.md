@@ -32,6 +32,31 @@ right place:
 The app itself needs no changes — it answers to any name that reaches it.
 `barbot.local` carries on working alongside.
 
+## The machine's own screen
+
+The square panel on the front of the machine gets its own layout, at a URL of
+its own:
+
+    http://barbot.local/square
+
+Nothing picks between the two automatically — the panel and a phone are both
+small touchscreens and no header separates them honestly. The panel is pointed
+at `/square` and nothing else is, so a phone opening `barbot.local` always
+gets the phone layout. Open `/square` from a laptop to work on it, in a window
+squared off to roughly 1:1.
+
+Setting up the panel is opt-in, because the usual install is headless and this
+one wants an X server and Chromium:
+
+    curl -sSL https://raw.githubusercontent.com/pdvsn99/barbot/main/bootstrap.sh | sudo KIOSK=1 bash
+
+That's needed once. It leaves `/etc/barbot-kiosk` behind, and later re-runs
+pick the flag back up on their own.
+
+Fonts are served from the Pi rather than from Google. At a party the network
+often has no way out, and a layout that quietly falls back to system sans is
+worst on the one screen nobody's holding.
+
 ## Updating
 
 `update.sh` runs on a timer and applies new commits from `main`, but it only

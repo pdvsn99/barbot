@@ -127,6 +127,90 @@ systemctl enable barbot.service barbot-update.timer
 systemctl restart barbot.service
 systemctl restart barbot-update.timer
 
+# --- the machine's own screen (opt-in) ------------------------------------
+# Only for the Pi with the square panel wired to it. It's off by default
+# because the usual install is headless — a Zero 2 with no desktop — and this
+# pulls in an X server and Chromium, which is a lot of card and a lot of RAM
+# to spend on a machine with no screen to show it on.
+#
+#   curl -sSL .../bootstrap.sh | sudo KIOSK=1 bash
+#
+# Once set, it stays set: the flag is remembered below so later re-runs don't
+# have to repeat it.
+
+KIOSK_FLAG=/etc/barbot-kiosk
+[ -f "$KIOSK_FLAG" ] && KIOSK=1
+
+if [ "${KIOSK:-0}" = "1" ]; then
+    echo "Setting up the panel (KIOSK=1)"
+    touch "$KIOSK_FLAG"
+
+    apt-get install -y -qq xserver-xorg xinit x11-xserver-utils unclutter
+    # Named chromium on Bookworm, chromium-browser on older images. Ask for
+    # both and take whichever landed.
+    apt-get install -y -qq chromium || apt-get install -y -qq chromium-browser || true
+    CHROMIUM=$(command -v chromium || command -v chromium-browser || true)
+
+    if [ -z "$CHROMIUM" ]; then
+        echo "No chromium available from apt — skipping the panel setup."
+    else
+        cat > /usr/local/bin/barbot-kiosk <<EOF
+#!/bin/bash
+# Full-screen browser on the panel, pointed at the square layout.
+xset s off -dpms s noblank      # a bar that blanks mid-party is no use
+unclutter -idle 0 &             # no mouse pointer parked over a button
+exec $CHROMIUM \\
+    --kiosk http://localhost/square \\
+    --noerrdialogs --disable-infobars --incognito \\
+    --check-for-update-interval=31536000 \\
+    --disable-pinch --overscroll-history-navigation=0 \\
+    --disable-session-crashed-bubble --disable-features=TranslateUI
+EOF
+        chmod +x /usr/local/bin/barbot-kiosk
+
+        cat > /etc/systemd/system/barbot-kiosk.service <<EOF
+[Unit]
+Description=Cocktail machine panel
+# The app serves the page, so there's nothing to show until it's up.
+After=barbot.service
+Wants=barbot.service
+
+[Service]
+ExecStart=/usr/bin/xinit /usr/local/bin/barbot-kiosk -- :0 vt1 -nocursor
+Restart=always
+RestartSec=5
+User=$USERNAME
+# xinit wants a console of its own to take over.
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+        # Starting X needs permission that Debian withholds by default from
+        # anyone not sitting at the machine — which, started by systemd, we
+        # aren't.
+        if [ -f /etc/X11/Xwrapper.config ]; then
+            sed -i 's/^allowed_users=.*/allowed_users=anybody/' /etc/X11/Xwrapper.config
+            grep -q '^needs_root_rights' /etc/X11/Xwrapper.config \
+                || echo 'needs_root_rights=yes' >> /etc/X11/Xwrapper.config
+        else
+            printf 'allowed_users=anybody\nneeds_root_rights=yes\n' \
+                > /etc/X11/Xwrapper.config
+        fi
+        usermod -aG tty,video "$USERNAME" || true
+
+        systemctl daemon-reload
+        systemctl enable barbot-kiosk.service
+        systemctl restart barbot-kiosk.service
+        KIOSK_MSG="The panel is showing http://localhost/square"
+    fi
+else
+    KIOSK_MSG=""
+fi
+
 # --- Raspberry Pi Connect (browser-based remote shell) --------------------
 # Shell-only variant: no desktop needed, works on a Zero 2. Signing in has to
 # be done by hand once, since it needs you to open a link in a browser.
@@ -155,4 +239,8 @@ echo "router has to serve it. In the router's admin pages:"
 echo "  1. Reserve $IP for MAC ${MAC:-the Pi} so the address stops moving."
 echo "  2. Add a static DNS / local DNS entry:  bar.bot -> $IP"
 echo "Nothing here depends on that — barbot.local keeps working either way."
-[ -n "$CONNECT_MSG" ] && echo "$CONNECT_MSG"
+# `|| true` because of `set -e` above: an empty message makes the test fail,
+# which would take the whole script's exit status — and anything after it —
+# down with it.
+[ -n "$KIOSK_MSG" ] && echo "$KIOSK_MSG" || true
+[ -n "$CONNECT_MSG" ] && echo "$CONNECT_MSG" || true
