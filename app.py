@@ -2,11 +2,19 @@
 app.py — the web server.
 
 Run it:      python3 app.py
-Then open:   http://localhost:5000   (or http://<pi-address>:5000 from your phone)
+Then open:   http://barbot.local   (or http://localhost from the Pi itself)
+
+Serves on port 80 so there's no ":5000" to remember. That's a privileged port,
+so running it by hand off the Pi needs either root or an override:
+
+    PORT=5000 python3 app.py
+
+On the Pi, systemd grants the one capability needed instead — see bootstrap.sh.
 """
 
 import json
 import os
+import socket
 import threading
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -362,10 +370,38 @@ def api_calibrate():
     return jsonify({"ok": True, "scale_factor": scale.scale_factor})
 
 
-if __name__ == "__main__":
-    print("Mock mode" if hardware.MOCK else "Hardware mode")
-    print("Open http://localhost:5000")
+def port_problem(port):
+    """
+    Why we can't have the port, in words, or None if we can.
+
+    Worth doing up front: werkzeug reports a refused bind as a bare
+    "Permission denied" and exits, which doesn't hint at the fix.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        app.run(host="0.0.0.0", port=5000, threaded=True)
+        probe.bind(("0.0.0.0", port))
+    except PermissionError:
+        return (f"Port {port} needs root. Either run this with sudo, or use a "
+                f"port that doesn't:\n    PORT=5000 python3 app.py")
+    except OSError as e:
+        return f"Can't listen on port {port}: {e}"
+    finally:
+        probe.close()
+    return None
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 80))
+    print("Mock mode" if hardware.MOCK else "Hardware mode")
+
+    problem = port_problem(port)
+    if problem:
+        print(problem)
+        raise SystemExit(1)
+
+    print(f"Open http://localhost{'' if port == 80 else ':' + str(port)}")
+    try:
+        app.run(host="0.0.0.0", port=port, threaded=True)
     finally:
         pumps.all_off()

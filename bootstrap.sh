@@ -19,7 +19,30 @@ echo "Setting up for user $USERNAME in $APP_DIR"
 # Raspberry Pi OS Bookworm refuses plain `pip install` (PEP 668), so take
 # everything from apt where possible.
 apt-get update -qq
-apt-get install -y -qq git python3-flask python3-gpiozero python3-lgpio curl
+apt-get install -y -qq git python3-flask python3-gpiozero python3-lgpio curl \
+                      avahi-daemon
+
+# --- give it a name -------------------------------------------------------
+# The hostname is what avahi publishes, so calling the Pi "barbot" is what
+# makes http://barbot.local work from any phone on the network with nothing
+# to set up on the phone. .local is the only suffix mDNS can answer for; see
+# the README for pointing a name like bar.bot at it instead.
+
+WANTED_HOSTNAME="barbot"
+if [ "$(hostname)" != "$WANTED_HOSTNAME" ]; then
+    echo "Renaming $(hostname) -> $WANTED_HOSTNAME"
+    # /etc/hosts first. Rename the machine without this and every later sudo
+    # spends a few seconds failing to look itself up.
+    if grep -q '^127\.0\.1\.1' /etc/hosts; then
+        sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$WANTED_HOSTNAME/" /etc/hosts
+    else
+        printf '127.0.1.1\t%s\n' "$WANTED_HOSTNAME" >> /etc/hosts
+    fi
+    hostnamectl set-hostname "$WANTED_HOSTNAME" 2>/dev/null \
+        || echo "$WANTED_HOSTNAME" > /etc/hostname
+fi
+
+systemctl enable --now avahi-daemon 2>/dev/null || true
 
 if [ -d "$APP_DIR/.git" ]; then
     echo "Already cloned — fetching latest"
@@ -44,6 +67,10 @@ WorkingDirectory=$APP_DIR
 Restart=always
 RestartSec=5
 User=$USERNAME
+# Serving on port 80 means no ":5000" to type. Ports below 1024 normally need
+# root; this hands over that one power on its own instead, so the app still
+# runs as $USERNAME.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
@@ -98,6 +125,17 @@ else
 fi
 
 IP=$(hostname -I | awk '{print $1}')
+IFACE=$(ip route get 1.1.1.1 2>/dev/null \
+        | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}')
+MAC=$(cat "/sys/class/net/$IFACE/address" 2>/dev/null)
+
 echo ""
-echo "Done. Open http://$IP:5000"
+echo "Done. Open http://barbot.local"
+echo "  ...or http://$IP if your network blocks mDNS."
+echo ""
+echo "Want it on bar.bot instead? That name can't come from mDNS, so your"
+echo "router has to serve it. In the router's admin pages:"
+echo "  1. Reserve $IP for MAC ${MAC:-the Pi} so the address stops moving."
+echo "  2. Add a static DNS / local DNS entry:  bar.bot -> $IP"
+echo "Nothing here depends on that — barbot.local keeps working either way."
 [ -n "$CONNECT_MSG" ] && echo "$CONNECT_MSG"
