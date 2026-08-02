@@ -11,7 +11,7 @@ set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRANCH="main"
 SERVICE="barbot"
-URL="http://localhost:5000"
+URL="http://localhost:${PORT:-80}"
 
 cd "$REPO" || { echo "No repo at $REPO"; exit 1; }
 

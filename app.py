@@ -2,11 +2,19 @@
 app.py — the web server.
 
 Run it:      python3 app.py
-Then open:   http://localhost:5000   (or http://<pi-address>:5000 from your phone)
+Then open:   http://barbot.local   (or http://localhost from the Pi itself)
+
+Serves on port 80 so there's no ":5000" to remember. That's a privileged port,
+so running it by hand off the Pi needs either root or an override:
+
+    PORT=5000 python3 app.py
+
+On the Pi, systemd grants the one capability needed instead — see bootstrap.sh.
 """
 
 import json
 import os
+import socket
 import threading
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -19,6 +27,7 @@ BOTTLES_FILE = os.path.join(HERE, "bottles.json")
 BOTTLES_DEFAULT = os.path.join(HERE, "bottles.default.json")
 RECIPES_FILE = os.path.join(HERE, "recipes.json")
 CALIBRATION_FILE = os.path.join(HERE, "calibration.json")
+SETTINGS_FILE = os.path.join(HERE, "settings.json")
 
 # bottles.json holds live state — what's loaded, how much is left — so it is
 # NOT tracked in git, or every pull would collide with it. On a fresh machine
@@ -128,45 +137,92 @@ class Config:
 # ---------------------------------------------------------------------------
 
 config = Config()
+
+# settings.json holds the mock/hardware choice made in the Care tab. It's
+# untracked, which is the whole point: the Pi resets tracked files to match
+# GitHub on every update, so the MOCK constant in hardware.py can't remember
+# anything. This can.
+settings = Config._load(SETTINGS_FILE, {})
+if isinstance(settings.get("mock"), bool):
+    try:
+        hardware.set_mock(settings["mock"])
+    except Exception as e:
+        print(f"Couldn't start in {'mock' if settings['mock'] else 'hardware'} "
+              f"mode ({e}) — staying in {'mock' if hardware.MOCK else 'hardware'}.")
+
+
+def save_settings():
+    Config._save(SETTINGS_FILE, {"mock": hardware.MOCK})
+
+
 pumps = Pumps()
 scale = Scale()
 config.max_line = pumps.count
 
-# Load saved calibration
-try:
-    with open(CALIBRATION_FILE) as f:
-        cal = json.load(f)
-        scale.offset = cal.get("offset", 0.0)
-        scale.scale_factor = cal.get("scale_factor", 1.0)
-except (FileNotFoundError, json.JSONDecodeError):
-    pass
+# Calibration is per mode. A tare done against the fake scale would be
+# nonsense on the real one, so the two are kept apart and only the real one is
+# written to disk.
+MOCK_CALIBRATION = {"offset": 0.0, "scale_factor": 1000.0}
 
+
+def load_calibration():
+    cal = Config._load(CALIBRATION_FILE, {})
+    try:
+        return {"offset": float(cal.get("offset", 0.0)),
+                "scale_factor": float(cal.get("scale_factor", 1.0))}
+    except (TypeError, ValueError):
+        return {"offset": 0.0, "scale_factor": 1.0}
+
+
+calibrations = {True: dict(MOCK_CALIBRATION), False: load_calibration()}
+
+
+def remember_calibration():
+    """Stash the live figures against whichever mode we're in."""
+    calibrations[hardware.MOCK] = {"offset": scale.offset,
+                                   "scale_factor": scale.scale_factor}
+
+
+def apply_calibration():
+    cal = calibrations[hardware.MOCK]
+    scale.offset = cal["offset"]
+    scale.scale_factor = cal["scale_factor"]
+
+
+apply_calibration()
 if hardware.MOCK:
-    scale.scale_factor = 1000.0
     scale.mock_set_glass(180.0)   # pretend there's a glass on the tray
-    start_mock_flow(pumps, scale)
+start_mock_flow(pumps, scale)     # idles unless the mode is mock
 
 scale.start_reader()
 
 bartender = Bartender(pumps, scale, config)
 
-if hardware.MOCK:
-    # A real glass gets emptied and put back. The fake one doesn't, so without
-    # this the tray reading climbs forever as people play with the demo.
-    def _reset_fake_glass():
-        import time as _t
-        while True:
-            _t.sleep(5)
-            if not bartender.status["busy"] and scale.grams(1) > 400:
+
+# A real glass gets emptied and put back. The fake one doesn't, so without
+# this the tray reading climbs forever as people play with the demo.
+def _reset_fake_glass():
+    import time as _t
+    while True:
+        _t.sleep(5)
+        try:
+            if hardware.MOCK and not bartender.status["busy"] and scale.grams(1) > 400:
                 scale.mock_set_glass(180.0)
                 for b in config.bottles:
                     b["remaining_ml"] = b.get("bottle_ml", 700)
-    threading.Thread(target=_reset_fake_glass, daemon=True).start()
+        except Exception:
+            pass   # mid mode-switch, most likely. Try again in five seconds.
+
+
+threading.Thread(target=_reset_fake_glass, daemon=True).start()
 
 app = Flask(__name__, static_folder="static")
 
 
 def save_calibration():
+    remember_calibration()
+    if hardware.MOCK:
+        return   # don't let a demo overwrite the machine's real numbers
     with open(CALIBRATION_FILE, "w") as f:
         json.dump({"offset": scale.offset, "scale_factor": scale.scale_factor}, f, indent=2)
 
@@ -277,6 +333,32 @@ def api_tare():
     return jsonify({"ok": True, "offset": scale.offset})
 
 
+@app.route("/api/mock", methods=["POST"])
+def api_mock():
+    """Switch between fake hardware and the real thing, from the Care tab."""
+    want = bool(request.json.get("mock"))
+    if want == hardware.MOCK:
+        return jsonify({"ok": True, "mock": hardware.MOCK})
+    if bartender.busy():
+        return jsonify({"error": "Finish what it's doing first."}), 409
+
+    pumps.all_off()
+    remember_calibration()
+    try:
+        hardware.set_mock(want)
+    except ImportError:
+        return jsonify({"error": "No gpiozero here — this isn't a Pi, so it "
+                                 "can only run in mock mode."}), 409
+    except Exception as e:
+        return jsonify({"error": f"Couldn't switch to hardware: {e}"}), 500
+
+    apply_calibration()
+    if hardware.MOCK:
+        scale.mock_set_glass(180.0)
+    save_settings()
+    return jsonify({"ok": True, "mock": hardware.MOCK})
+
+
 @app.route("/api/calibrate", methods=["POST"])
 def api_calibrate():
     grams = float(request.json["grams"])
@@ -288,10 +370,38 @@ def api_calibrate():
     return jsonify({"ok": True, "scale_factor": scale.scale_factor})
 
 
-if __name__ == "__main__":
-    print("Mock mode" if hardware.MOCK else "Hardware mode")
-    print("Open http://localhost:5000")
+def port_problem(port):
+    """
+    Why we can't have the port, in words, or None if we can.
+
+    Worth doing up front: werkzeug reports a refused bind as a bare
+    "Permission denied" and exits, which doesn't hint at the fix.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        app.run(host="0.0.0.0", port=5000, threaded=True)
+        probe.bind(("0.0.0.0", port))
+    except PermissionError:
+        return (f"Port {port} needs root. Either run this with sudo, or use a "
+                f"port that doesn't:\n    PORT=5000 python3 app.py")
+    except OSError as e:
+        return f"Can't listen on port {port}: {e}"
+    finally:
+        probe.close()
+    return None
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 80))
+    print("Mock mode" if hardware.MOCK else "Hardware mode")
+
+    problem = port_problem(port)
+    if problem:
+        print(problem)
+        raise SystemExit(1)
+
+    print(f"Open http://localhost{'' if port == 80 else ':' + str(port)}")
+    try:
+        app.run(host="0.0.0.0", port=port, threaded=True)
     finally:
         pumps.all_off()
