@@ -16,8 +16,16 @@ from pour import Bartender
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BOTTLES_FILE = os.path.join(HERE, "bottles.json")
+BOTTLES_DEFAULT = os.path.join(HERE, "bottles.default.json")
 RECIPES_FILE = os.path.join(HERE, "recipes.json")
 CALIBRATION_FILE = os.path.join(HERE, "calibration.json")
+
+# bottles.json holds live state — what's loaded, how much is left — so it is
+# NOT tracked in git, or every pull would collide with it. On a fresh machine
+# we seed it from the tracked default.
+if not os.path.exists(BOTTLES_FILE) and os.path.exists(BOTTLES_DEFAULT):
+    import shutil
+    shutil.copy(BOTTLES_DEFAULT, BOTTLES_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -31,6 +39,9 @@ class Config:
         self._lock = threading.Lock()
         self.bottles = self._load(BOTTLES_FILE, [])
         self.recipes = self._load(RECIPES_FILE, [])
+        # Set once the pumps exist. Lines beyond this aren't wired up yet, so
+        # anything sitting on them doesn't count as loaded.
+        self.max_line = None
 
     @staticmethod
     def _load(path, fallback):
@@ -68,6 +79,7 @@ class Config:
             b["ingredient"].lower(): b
             for b in self.bottles
             if b.get("ingredient")
+            and (self.max_line is None or b["line"] <= self.max_line)
         }
 
     def consume(self, line, ml):
@@ -118,6 +130,7 @@ class Config:
 config = Config()
 pumps = Pumps()
 scale = Scale()
+config.max_line = pumps.count
 
 # Load saved calibration
 try:
@@ -133,7 +146,22 @@ if hardware.MOCK:
     scale.mock_set_glass(180.0)   # pretend there's a glass on the tray
     start_mock_flow(pumps, scale)
 
+scale.start_reader()
+
 bartender = Bartender(pumps, scale, config)
+
+if hardware.MOCK:
+    # A real glass gets emptied and put back. The fake one doesn't, so without
+    # this the tray reading climbs forever as people play with the demo.
+    def _reset_fake_glass():
+        import time as _t
+        while True:
+            _t.sleep(5)
+            if not bartender.status["busy"] and scale.grams(1) > 400:
+                scale.mock_set_glass(180.0)
+                for b in config.bottles:
+                    b["remaining_ml"] = b.get("bottle_ml", 700)
+    threading.Thread(target=_reset_fake_glass, daemon=True).start()
 
 app = Flask(__name__, static_folder="static")
 

@@ -1,0 +1,66 @@
+[
+  {
+    "line": 1,
+    "ingredient": "Gin",
+    "density": 0.94,
+    "bottle_ml": 700,
+    "remaining_ml": 700,
+    "overshoot_g": 1.0
+  },
+  {
+    "line": 2,
+    "ingredient": "Vodka",
+    "density": 0.94,
+    "bottle_ml": 700,
+    "remaining_ml": 700,
+    "overshoot_g": 1.0
+  },
+  {
+    "line": 3,
+    "ingredient": "White rum",
+    "density": 0.94,
+    "bottle_ml": 700,
+    "remaining_ml": 700,
+    "overshoot_g": 1.0
+  },
+  {
+    "line": 4,
+    "ingredient": "Bourbon",
+    "density": 0.94,
+    "bottle_ml": 700,
+    "remaining_ml": 700,
+    "overshoot_g": 1.0
+  },
+  {
+    "line": 5,
+    "ingredient": "Campari",
+    "density": 1.06,
+    "bottle_ml": 700,
+    "remaining_ml": 700,
+    "overshoot_g": 1.2
+  },
+  {
+    "line": 6,
+    "ingredient": "Sweet vermouth",
+    "density": 1.03,
+    "bottle_ml": 750,
+    "remaining_ml": 750,
+    "overshoot_g": 1.0
+  },
+  {
+    "line": 7,
+    "ingredient": "Lime juice",
+    "density": 1.04,
+    "bottle_ml": 500,
+    "remaining_ml": 500,
+    "overshoot_g": 1.0
+  },
+  {
+    "line": 8,
+    "ingredient": "Sugar syrup",
+    "density": 1.28,
+    "bottle_ml": 500,
+    "remaining_ml": 500,
+    "overshoot_g": 1.6
+  }
+]

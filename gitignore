@@ -1,0 +1,4 @@
+calibration.json
+bottles.json
+__pycache__/
+*.pyc
