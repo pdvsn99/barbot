@@ -6,7 +6,7 @@
 
 set -e
 
-REPO_URL="https://github.com/YOURNAME/barbot.git"
+REPO_URL="https://github.com/pdvsn99/barbot.git"
 BRANCH="main"
 
 # Whoever the Imager set up — won't necessarily be called "pi".
