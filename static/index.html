@@ -49,6 +49,11 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   color:var(--muted);letter-spacing:.04em;
 }
 .scale-read b{color:var(--paper);font-weight:500}
+.chip{
+  font-family:var(--mono);font-size:.58rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--amber);
+  border:1px solid var(--amber-dim);border-radius:99px;padding:.2rem .5rem;
+}
 
 .view{flex:1;overflow-y:auto;padding:1.1rem 1.25rem 2rem;-webkit-overflow-scrolling:touch}
 .hidden{display:none!important}
@@ -127,6 +132,25 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   flex:0 0 auto;
 }
 .mini:hover{color:var(--amber);border-color:var(--amber-dim)}
+
+/* ---------- switch ---------- */
+.switch-title{font-size:1rem;font-weight:500}
+.switch-sub{
+  font-family:var(--mono);font-size:.68rem;color:var(--muted);margin-top:.25rem;
+}
+.switch{
+  width:3.1rem;height:1.75rem;border-radius:99px;flex:0 0 auto;
+  border:1px solid var(--line);background:var(--panel-2);
+  padding:2px;display:flex;align-items:center;
+  transition:background .15s ease,border-color .15s ease;
+}
+.switch span{
+  width:1.35rem;height:1.35rem;border-radius:50%;background:var(--muted);
+  transition:transform .15s ease,background .15s ease;
+}
+.switch[aria-checked="true"]{background:var(--amber-dim);border-color:var(--amber)}
+.switch[aria-checked="true"] span{background:var(--amber);transform:translateX(1.375rem)}
+.switch:disabled{opacity:.45;cursor:default}
 
 /* ---------- buttons ---------- */
 .btn{
@@ -229,6 +253,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 <div class="app">
   <header class="head">
     <h1>The Machine</h1>
+    <span class="chip hidden" id="mock-chip">Mock</span>
     <div class="scale-read">TRAY <b id="weight">—</b></div>
   </header>
 
@@ -269,6 +294,22 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <p class="note">
       Zero it, then put something you know the weight of on the tray —
       a 500ml bottle of water is 500g, near enough.
+    </p>
+
+    <p class="eyebrow spaced">Mode</p>
+    <div class="row">
+      <div class="fields">
+        <div class="switch-title">Mock mode</div>
+        <div class="switch-sub" id="mock-sub">—</div>
+      </div>
+      <button class="switch" id="mock-toggle" role="switch"
+              aria-checked="false" aria-label="Mock mode"><span></span></button>
+    </div>
+    <p class="note">
+      On, the pumps and the scale are pretend — drinks pour on screen and
+      nothing moves, so you can show someone how it works with no bottles
+      attached. Off, it drives the real hardware. The choice sticks across
+      restarts and updates.
     </p>
 
     <p class="eyebrow spaced">Everything off</p>
@@ -430,12 +471,54 @@ $('#calibrate').onclick = () => {
     .then(() => toast('Calibrated.')).catch(e => toast(e.message));
 };
 
+/* ---------- mock mode ---------- */
+$('#mock-toggle').onclick = async () => {
+  const btn = $('#mock-toggle');
+  const want = btn.getAttribute('aria-checked') !== 'true';
+  btn.disabled = true;                     // and so the poll leaves it alone
+  btn.setAttribute('aria-checked', want);
+  try {
+    const r = await post('/api/mock', {mock: want});
+    toast(r.mock ? 'Mock mode on. Nothing will actually pour.'
+                 : 'Mock mode off. The pumps are live.');
+  } catch (e) {
+    btn.setAttribute('aria-checked', !want);
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+  tick();
+};
+
+function renderMode() {
+  const on = !!state.mock;
+  const btn = $('#mock-toggle');
+  if (!btn.disabled) btn.setAttribute('aria-checked', on);
+  $('#mock-chip').classList.toggle('hidden', !on);
+  $('#mock-sub').textContent = on
+    ? 'Simulated. Nothing will actually pour.'
+    : 'Live. The pumps will run for real.';
+}
+
 /* ---------- pour overlay ---------- */
+
+/* The overlay is driven by the poll, so hiding it isn't enough on its own —
+   the next tick would put it straight back while the finished status is still
+   sitting there. Instead we note which job was dismissed and keep it hidden
+   until the status moves on to something else. */
+let dismissedJob = null;
+const jobKey = s => [s.job, s.drink, s.finished_at || '', s.error || ''].join('|');
+
 $('#p-stop').onclick = () => post('/api/stop');
-$('#p-done').onclick = () => { $('#pour').classList.add('hidden'); };
+$('#p-done').onclick = () => {
+  if (state) dismissedJob = jobKey(state.status);
+  $('#pour').classList.add('hidden');
+};
 
 function renderPour(s) {
-  const show = s.busy || (s.finished_at && Date.now()/1000 - s.finished_at < 30) || s.error;
+  if (s.busy) dismissedJob = null;   // something new started
+  const recent = s.finished_at && Date.now()/1000 - s.finished_at < 30;
+  const show = (s.busy || recent || s.error) && jobKey(s) !== dismissedJob;
   $('#pour').classList.toggle('hidden', !show);
   if (!show) return;
 
@@ -480,6 +563,7 @@ async function tick() {
       state.weight_g === null ? 'no reading' : state.weight_g.toFixed(1) + ' g';
     renderDrinks();
     renderBottles();
+    renderMode();
     renderPour(state.status);
     schedule(state.status.busy ? 150 : 700);
   } catch (e) {
