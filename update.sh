@@ -5,7 +5,10 @@
 # something actually changed, and refuses to restart while a drink is pouring.
 
 set -u
-REPO="/home/pi/barbot"
+# Work out where we are rather than hardcoding a path. This has to be
+# self-locating: update.sh is tracked in git, so anything patched into it at
+# install time would be wiped by the next reset.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRANCH="main"
 SERVICE="barbot"
 URL="http://localhost:5000"

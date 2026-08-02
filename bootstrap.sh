@@ -6,7 +6,7 @@
 
 set -e
 
-REPO_URL="https://github.com/pdvsn99/barbot.git"
+REPO_URL="https://github.com/YOURNAME/barbot.git"
 BRANCH="main"
 
 # Whoever the Imager set up — won't necessarily be called "pi".
@@ -77,9 +77,6 @@ EOF
 echo "$USERNAME ALL=(ALL) NOPASSWD: /bin/systemctl restart barbot" \
     > /etc/sudoers.d/barbot
 chmod 440 /etc/sudoers.d/barbot
-
-# update.sh has the paths hardcoded for the default user; fix them if needed.
-sed -i "s|^REPO=.*|REPO=\"$APP_DIR\"|" "$APP_DIR/update.sh"
 
 systemctl daemon-reload
 systemctl enable --now barbot.service

@@ -13,6 +13,7 @@ else needs to change when you move from laptop to Pi.
 import time
 import threading
 import statistics
+import collections
 
 # ---------------------------------------------------------------------------
 # Set this to False once you're running on the Pi with hardware attached.
@@ -85,16 +86,26 @@ class Scale:
     """
     HX711 load cell reader.
 
-    Reading is done by bit-banging in Python. That is slightly unreliable —
-    if the OS interrupts us mid-read the chip can drop into power-down mode
-    and return nonsense. We deal with it by taking several samples and using
-    the median, which throws away the occasional wild value.
+    A background thread reads the chip continuously and keeps the last handful
+    of raw values. Everything else reads from that buffer instead of touching
+    the chip directly. Two reasons:
+
+      - The HX711 only produces 10 readings a second, so a direct read blocks
+        for up to 100ms. With the pour loop and the browser both polling, that
+        adds up fast on a slow Pi.
+      - Bit-banging in Python occasionally produces a garbage value. Taking the
+        median of the buffer throws those away.
+
+    Call start_reader() once at startup.
     """
 
     def __init__(self, offset=0.0, scale_factor=1.0):
         self.offset = offset            # raw reading with nothing on the scale
         self.scale_factor = scale_factor  # raw units per gram
         self._lock = threading.Lock()
+        self._recent = collections.deque(maxlen=20)
+        self._reader_started = False
+        self.last_error = None
 
         # Mock state
         self._mock_grams = 0.0
@@ -105,6 +116,30 @@ class Scale:
             self._clk = DigitalOutputDevice(HX711_CLOCK_PIN)
             self._dat = DigitalInputDevice(HX711_DATA_PIN)
             self._clk.off()
+
+    def start_reader(self):
+        """Begin sampling in the background. Safe to call more than once."""
+        if self._reader_started:
+            return
+        self._reader_started = True
+
+        def loop():
+            while True:
+                try:
+                    value = self._read_raw_once()
+                    self._recent.append(value)
+                    self.last_error = None
+                except Exception as e:
+                    self.last_error = str(e)
+                    time.sleep(0.2)
+                time.sleep(0.005)
+
+        threading.Thread(target=loop, daemon=True).start()
+
+        # Give the buffer a moment to fill before anything asks for a weight.
+        deadline = time.time() + 3.0
+        while not self._recent and time.time() < deadline:
+            time.sleep(0.05)
 
     # -- raw layer ----------------------------------------------------------
 
@@ -135,16 +170,17 @@ class Scale:
         return float(value)
 
     def read_raw(self, samples=5):
-        with self._lock:
-            values = []
-            for _ in range(samples):
-                try:
-                    values.append(self._read_raw_once())
-                except RuntimeError:
-                    continue
-            if not values:
-                raise RuntimeError("Load cell not responding. Check wiring.")
-            return statistics.median(values)
+        """Median of the most recent `samples` background readings."""
+        if not self._reader_started:
+            self.start_reader()
+        deadline = time.time() + 3.0
+        while not self._recent and time.time() < deadline:
+            time.sleep(0.05)
+        values = list(self._recent)[-max(1, samples):]
+        if not values:
+            raise RuntimeError(
+                self.last_error or "Load cell not responding. Check wiring.")
+        return statistics.median(values)
 
     # -- grams --------------------------------------------------------------
 
