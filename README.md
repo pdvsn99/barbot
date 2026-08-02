@@ -32,6 +32,26 @@ right place:
 The app itself needs no changes — it answers to any name that reaches it.
 `barbot.local` carries on working alongside.
 
+## Updating
+
+`update.sh` runs on a timer and applies new commits from `main`, but it only
+ever touches the app: `git reset --hard`, then restart the service. It runs as
+an ordinary user and cannot do the rest.
+
+Everything *outside* the app — the systemd unit, the hostname, apt packages,
+the sudoers entry — belongs to `bootstrap.sh`, which needs root. So when
+`bootstrap.sh` changes, re-run it:
+
+    curl -sSL https://raw.githubusercontent.com/pdvsn99/barbot/main/bootstrap.sh | sudo bash
+
+It's safe to run over an existing install, and `update.sh` prints a reminder
+when an update it has just applied touched `bootstrap.sh`.
+
+If the app can't bind port 80 — which is what happens on a Pi whose systemd
+unit predates the `CAP_NET_BIND_SERVICE` grant — it says so and serves on 5000
+instead, rather than failing to start. Re-running `bootstrap.sh` is what moves
+it to 80.
+
 ## Running it off the Pi
 
     PORT=5000 python3 app.py
