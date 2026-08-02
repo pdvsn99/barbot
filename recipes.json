@@ -1,0 +1,109 @@
+[
+  {
+    "id": "negroni",
+    "name": "Negroni",
+    "glass": "Rocks glass, one big cube",
+    "ingredients": [
+      { "ingredient": "Gin", "ml": 30 },
+      { "ingredient": "Campari", "ml": 30 },
+      { "ingredient": "Sweet vermouth", "ml": 30 },
+      { "ingredient": "Orange peel", "manual": true, "note": "Twist an orange peel over the top, then drop it in" }
+    ]
+  },
+  {
+    "id": "boulevardier",
+    "name": "Boulevardier",
+    "glass": "Rocks glass, one big cube",
+    "ingredients": [
+      { "ingredient": "Bourbon", "ml": 35 },
+      { "ingredient": "Campari", "ml": 25 },
+      { "ingredient": "Sweet vermouth", "ml": 25 },
+      { "ingredient": "Orange peel", "manual": true, "note": "Orange twist" }
+    ]
+  },
+  {
+    "id": "daiquiri",
+    "name": "Daiquiri",
+    "glass": "Coupe, chilled",
+    "ingredients": [
+      { "ingredient": "White rum", "ml": 60 },
+      { "ingredient": "Lime juice", "ml": 25 },
+      { "ingredient": "Sugar syrup", "ml": 15 },
+      { "ingredient": "Ice", "manual": true, "note": "Shake hard with ice, then strain into a chilled coupe" }
+    ]
+  },
+  {
+    "id": "gimlet",
+    "name": "Gimlet",
+    "glass": "Coupe, chilled",
+    "ingredients": [
+      { "ingredient": "Gin", "ml": 60 },
+      { "ingredient": "Lime juice", "ml": 22 },
+      { "ingredient": "Sugar syrup", "ml": 18 },
+      { "ingredient": "Ice", "manual": true, "note": "Shake with ice and strain" }
+    ]
+  },
+  {
+    "id": "vodka-gimlet",
+    "name": "Vodka Gimlet",
+    "glass": "Coupe, chilled",
+    "ingredients": [
+      { "ingredient": "Vodka", "ml": 60 },
+      { "ingredient": "Lime juice", "ml": 22 },
+      { "ingredient": "Sugar syrup", "ml": 18 },
+      { "ingredient": "Ice", "manual": true, "note": "Shake with ice and strain" }
+    ]
+  },
+  {
+    "id": "whiskey-sour",
+    "name": "Whiskey Sour",
+    "glass": "Rocks glass",
+    "ingredients": [
+      { "ingredient": "Bourbon", "ml": 55 },
+      { "ingredient": "Lime juice", "ml": 25 },
+      { "ingredient": "Sugar syrup", "ml": 20 },
+      { "ingredient": "Egg white", "manual": true, "note": "Add egg white, dry shake, then shake with ice" }
+    ]
+  },
+  {
+    "id": "old-fashioned",
+    "name": "Old Fashioned",
+    "glass": "Rocks glass, one big cube",
+    "ingredients": [
+      { "ingredient": "Bourbon", "ml": 60 },
+      { "ingredient": "Sugar syrup", "ml": 8 },
+      { "ingredient": "Angostura bitters", "manual": true, "note": "Two dashes, then stir with ice for 20 seconds" }
+    ]
+  },
+  {
+    "id": "americano",
+    "name": "Americano",
+    "glass": "Highball, filled with ice",
+    "ingredients": [
+      { "ingredient": "Campari", "ml": 30 },
+      { "ingredient": "Sweet vermouth", "ml": 30 },
+      { "ingredient": "Soda water", "manual": true, "note": "Top up with soda water — the machine can't pour fizz" }
+    ]
+  },
+  {
+    "id": "rum-and-lime",
+    "name": "Rum, Lime, Soda",
+    "glass": "Highball, filled with ice",
+    "ingredients": [
+      { "ingredient": "White rum", "ml": 50 },
+      { "ingredient": "Lime juice", "ml": 20 },
+      { "ingredient": "Sugar syrup", "ml": 10 },
+      { "ingredient": "Soda water", "manual": true, "note": "Top up with soda water" }
+    ]
+  },
+  {
+    "id": "vodka-soda",
+    "name": "Vodka Soda",
+    "glass": "Highball, filled with ice",
+    "ingredients": [
+      { "ingredient": "Vodka", "ml": 50 },
+      { "ingredient": "Lime juice", "ml": 10 },
+      { "ingredient": "Soda water", "manual": true, "note": "Top up with soda water" }
+    ]
+  }
+]
