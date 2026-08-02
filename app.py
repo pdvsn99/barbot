@@ -370,11 +370,14 @@ def api_calibrate():
     return jsonify({"ok": True, "scale_factor": scale.scale_factor})
 
 
+FALLBACK_PORT = 5000
+
+
 def port_problem(port):
     """
-    Why we can't have the port, in words, or None if we can.
+    Why we can't have this port, in words, or None if we can.
 
-    Worth doing up front: werkzeug reports a refused bind as a bare
+    Worth asking up front: werkzeug reports a refused bind as a bare
     "Permission denied" and exits, which doesn't hint at the fix.
     """
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -382,8 +385,7 @@ def port_problem(port):
     try:
         probe.bind(("0.0.0.0", port))
     except PermissionError:
-        return (f"Port {port} needs root. Either run this with sudo, or use a "
-                f"port that doesn't:\n    PORT=5000 python3 app.py")
+        return f"Port {port} needs privileges this process hasn't got."
     except OSError as e:
         return f"Can't listen on port {port}: {e}"
     finally:
@@ -392,12 +394,22 @@ def port_problem(port):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 80))
+    asked_for = os.environ.get("PORT")
+    port = int(asked_for or 80)
     print("Mock mode" if hardware.MOCK else "Hardware mode")
 
     problem = port_problem(port)
+    if problem and not asked_for and port_problem(FALLBACK_PORT) is None:
+        # A Pi set up before port 80 was a thing won't have the capability in
+        # its systemd unit, and only bootstrap.sh can put it there. Coming up
+        # on the old port beats not coming up at all — systemd would just
+        # restart us into the same wall until the update rolled back.
+        print(f"{problem}\nUsing port {FALLBACK_PORT} instead. Re-run "
+              f"bootstrap.sh on the Pi for port 80 and barbot.local.")
+        port, problem = FALLBACK_PORT, None
+
     if problem:
-        print(problem)
+        print(f"{problem}\nPick another one with:  PORT=5000 python3 app.py")
         raise SystemExit(1)
 
     print(f"Open http://localhost{'' if port == 80 else ':' + str(port)}")

@@ -29,6 +29,7 @@ apt-get install -y -qq git python3-flask python3-gpiozero python3-lgpio curl \
 # the README for pointing a name like bar.bot at it instead.
 
 WANTED_HOSTNAME="barbot"
+RENAMED=0
 if [ "$(hostname)" != "$WANTED_HOSTNAME" ]; then
     echo "Renaming $(hostname) -> $WANTED_HOSTNAME"
     # /etc/hosts first. Rename the machine without this and every later sudo
@@ -40,14 +41,25 @@ if [ "$(hostname)" != "$WANTED_HOSTNAME" ]; then
     fi
     hostnamectl set-hostname "$WANTED_HOSTNAME" 2>/dev/null \
         || echo "$WANTED_HOSTNAME" > /etc/hostname
+    RENAMED=1
 fi
 
 systemctl enable --now avahi-daemon 2>/dev/null || true
+if [ "$RENAMED" = "1" ]; then
+    # An avahi that was already running carries on publishing the old name
+    # until it's made to look again. --now above won't do it: the service is
+    # started, so there's nothing for it to start.
+    systemctl restart avahi-daemon 2>/dev/null || true
+fi
 
 if [ -d "$APP_DIR/.git" ]; then
     echo "Already cloned — fetching latest"
     sudo -u "$USERNAME" git -C "$APP_DIR" fetch origin "$BRANCH" --quiet
     sudo -u "$USERNAME" git -C "$APP_DIR" reset --hard "origin/$BRANCH" --quiet
+    # update.sh writes this when a commit wouldn't start, and then refuses to
+    # try it again. Running this script is the deliberate second attempt, and
+    # it has just installed everything update.sh couldn't.
+    rm -f "$APP_DIR/.bad-commit"
 else
     sudo -u "$USERNAME" git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
 fi
@@ -107,8 +119,13 @@ echo "$USERNAME ALL=(ALL) NOPASSWD: /bin/systemctl restart barbot" \
 chmod 440 /etc/sudoers.d/barbot
 
 systemctl daemon-reload
-systemctl enable --now barbot.service
-systemctl enable --now barbot-update.timer
+systemctl enable barbot.service barbot-update.timer
+
+# restart rather than `enable --now`: on a machine that already has these, the
+# --now half is a no-op because the service is running, so a changed unit file
+# — a new port, a new capability — would sit there doing nothing.
+systemctl restart barbot.service
+systemctl restart barbot-update.timer
 
 # --- Raspberry Pi Connect (browser-based remote shell) --------------------
 # Shell-only variant: no desktop needed, works on a Zero 2. Signing in has to
