@@ -24,7 +24,16 @@ if [ "$LOCAL" = "$REMOTE" ]; then
     exit 0
 fi
 
+# If we already tried this commit and it wouldn't start, don't loop on it
+# forever. Push a fix and we'll pick that up instead.
+BADFILE="$REPO/.bad-commit"
+if [ -f "$BADFILE" ] && [ "$(cat "$BADFILE")" = "$REMOTE" ]; then
+    echo "Skipping $REMOTE — it failed to start last time"
+    exit 0
+fi
+
 # Never yank the rug mid-pour. We'll catch it on the next run.
+# If the app is down entirely curl fails, which is fine — we want to update.
 BUSY=$(curl -s --max-time 3 "$URL/api/state" | python3 -c \
     "import json,sys; print(json.load(sys.stdin)['status']['busy'])" 2>/dev/null)
 if [ "$BUSY" = "True" ]; then
@@ -40,8 +49,23 @@ git reset --hard "origin/$BRANCH" --quiet
 
 if git diff --name-only "$LOCAL" "$REMOTE" | grep -q "requirements.txt"; then
     echo "Dependencies changed — installing"
-    pip3 install -r requirements.txt --quiet
+    pip3 install -r requirements.txt --quiet --break-system-packages 2>/dev/null || true
 fi
 
 sudo systemctl restart "$SERVICE"
-echo "Restarted $SERVICE"
+
+# Did it actually come back? Give it half a minute.
+for _ in $(seq 1 15); do
+    sleep 2
+    if curl -s --max-time 2 "$URL/api/state" > /dev/null 2>&1; then
+        echo "Restarted $SERVICE — healthy"
+        rm -f "$BADFILE"
+        exit 0
+    fi
+done
+
+echo "App didn't come back. Rolling back to $(git rev-parse --short $LOCAL)"
+echo "$REMOTE" > "$BADFILE"
+git reset --hard "$LOCAL" --quiet
+sudo systemctl restart "$SERVICE"
+echo "Rolled back. Push a fix and it'll be picked up automatically."

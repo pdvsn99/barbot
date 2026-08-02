@@ -2,11 +2,11 @@
 # Sets up a fresh Raspberry Pi from nothing. Safe to run more than once.
 #
 # Either called automatically on first boot (see README), or by hand:
-#   curl -sSL https://raw.githubusercontent.com/YOURNAME/barbot/main/bootstrap.sh | sudo bash
+#   curl -sSL https://raw.githubusercontent.com/pdvsn99/barbot/main/bootstrap.sh | sudo bash
 
 set -e
 
-REPO_URL="https://github.com/YOURNAME/barbot.git"
+REPO_URL="https://github.com/pdvsn99/barbot.git"
 BRANCH="main"
 
 # Whoever the Imager set up — won't necessarily be called "pi".
@@ -42,6 +42,7 @@ After=network.target
 ExecStart=/usr/bin/python3 $APP_DIR/app.py
 WorkingDirectory=$APP_DIR
 Restart=always
+RestartSec=5
 User=$USERNAME
 
 [Install]
@@ -82,6 +83,21 @@ systemctl daemon-reload
 systemctl enable --now barbot.service
 systemctl enable --now barbot-update.timer
 
+# --- Raspberry Pi Connect (browser-based remote shell) --------------------
+# Shell-only variant: no desktop needed, works on a Zero 2. Signing in has to
+# be done by hand once, since it needs you to open a link in a browser.
+if apt-get install -y -qq rpi-connect-lite 2>/dev/null; then
+    # Without lingering, Connect drops off whenever the user isn't logged in —
+    # which on a headless machine is always.
+    loginctl enable-linger "$USERNAME" || true
+    sudo -u "$USERNAME" XDG_RUNTIME_DIR="/run/user/$(id -u "$USERNAME")" \
+        systemctl --user enable --now rpi-connect 2>/dev/null || true
+    CONNECT_MSG="Then run:  rpi-connect signin"
+else
+    CONNECT_MSG=""
+fi
+
 IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo "Done. Open http://$IP:5000"
+[ -n "$CONNECT_MSG" ] && echo "$CONNECT_MSG"
