@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101614">
+<title>Bar Bot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#101614;
+  --panel:#18211E;
+  --panel-2:#1F2B26;
+  --line:#2A3833;
+  --amber:#E9A13B;
+  --amber-dim:#8A6224;
+  --paper:#EDE6D6;
+  --muted:#7E8F87;
+  --alert:#D2624A;
+  --display:'Bricolage Grotesque',ui-sans-serif,system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--ink);
+  color:var(--paper);
+  font-family:var(--display);
+  -webkit-font-smoothing:antialiased;
+  overscroll-behavior:none;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--amber);outline-offset:3px;border-radius:4px}
+
+/* ---------- shell ---------- */
+.app{display:flex;flex-direction:column;height:100dvh}
+.head{
+  display:flex;align-items:baseline;gap:.75rem;
+  padding:calc(env(safe-area-inset-top) + 1.1rem) 1.25rem .9rem;
+  border-bottom:1px solid var(--line);
+}
+.head h1{
+  font-size:1.15rem;font-weight:800;letter-spacing:-.02em;margin:0;
+}
+.scale-read{
+  margin-left:auto;font-family:var(--mono);font-size:.8rem;
+  color:var(--muted);letter-spacing:.04em;
+}
+.scale-read b{color:var(--paper);font-weight:500}
+.chip{
+  font-family:var(--mono);font-size:.58rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--amber);
+  border:1px solid var(--amber-dim);border-radius:99px;padding:.2rem .5rem;
+}
+
+.view{flex:1;overflow-y:auto;padding:1.1rem 1.25rem 2rem;-webkit-overflow-scrolling:touch}
+.hidden{display:none!important}
+
+.eyebrow{
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--muted);margin:0 0 .75rem;
+}
+.eyebrow.spaced{margin-top:2rem}
+
+/* ---------- drink cards ---------- */
+.grid{display:grid;gap:.7rem}
+@media(min-width:620px){.grid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}}
+
+/* small square screen (~2x2in device panel): one drink fills the whole
+   screen, swipe sideways to the next. Bottle setup stays on the web app. */
+@media(max-width:640px) and (min-aspect-ratio:4/5) and (max-aspect-ratio:5/4){
+  .tabs button[data-view="bottles"]{display:none}
+
+  #view-drinks{
+    display:flex;padding:0;overflow-x:auto;overflow-y:hidden;
+    scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+  }
+  #view-drinks::-webkit-scrollbar{display:none}
+  #view-drinks .eyebrow{display:none}
+  #view-drinks .grid{display:contents}
+  #view-drinks .card{
+    flex:0 0 100%;scroll-snap-align:start;
+    background:none;border:none;border-radius:0;
+    display:flex;flex-direction:column;justify-content:center;
+    padding:0 1.9rem;
+  }
+  #view-drinks .card h2{font-size:2.1rem}
+  #view-drinks .card .pour-list{font-size:.85rem}
+  #view-drinks .card .tag{top:1.6rem;right:1.9rem}
+}
+
+.card{
+  width:100%;text-align:left;background:var(--panel);
+  border:1px solid var(--line);border-radius:14px;
+  padding:1rem 1.05rem;display:block;position:relative;
+  transition:border-color .15s ease,transform .1s ease;
+}
+.card:active{transform:scale(.985)}
+.card:hover{border-color:var(--amber-dim)}
+.card h2{
+  font-size:1.35rem;font-weight:700;letter-spacing:-.025em;margin:0 0 .45rem;
+}
+.card .pour-list{
+  font-family:var(--mono);font-size:.74rem;color:var(--muted);
+  line-height:1.6;letter-spacing:.01em;
+}
+.card .pour-list em{color:var(--amber);font-style:normal}
+.card.out{opacity:.42}
+.card.out:hover{border-color:var(--line)}
+.tag{
+  position:absolute;top:1rem;right:1rem;
+  font-family:var(--mono);font-size:.6rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);
+  border:1px solid var(--line);border-radius:99px;padding:.2rem .5rem;
+}
+
+/* ---------- bottle rows ---------- */
+.row{
+  display:flex;align-items:center;gap:.85rem;
+  background:var(--panel);border:1px solid var(--line);
+  border-radius:12px;padding:.8rem .9rem;margin-bottom:.55rem;
+}
+.line-no{
+  font-family:var(--mono);font-size:.85rem;color:var(--ink);
+  background:var(--amber);border-radius:7px;
+  width:1.85rem;height:1.85rem;flex:0 0 auto;
+  display:grid;place-items:center;font-weight:600;
+}
+.row .fields{flex:1;min-width:0}
+.row input,.row select{
+  width:100%;background:transparent;border:none;color:var(--paper);
+  font-family:var(--display);font-size:1rem;font-weight:500;padding:0;
+}
+.row input::placeholder{color:var(--muted)}
+.row .sub{
+  display:flex;align-items:center;gap:.5rem;margin-top:.25rem;
+  font-family:var(--mono);font-size:.68rem;color:var(--muted);
+}
+.row .sub input{
+  font-family:var(--mono);font-size:.68rem;width:3.4rem;
+  border-bottom:1px solid var(--line);
+}
+.level{
+  width:3px;border-radius:2px;background:var(--line);
+  height:2.4rem;flex:0 0 auto;position:relative;overflow:hidden;
+}
+.level span{position:absolute;bottom:0;left:0;right:0;background:var(--amber)}
+.level.low span{background:var(--alert)}
+.mini{
+  font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);
+  border:1px solid var(--line);border-radius:99px;padding:.35rem .6rem;
+  flex:0 0 auto;
+}
+.mini:hover{color:var(--amber);border-color:var(--amber-dim)}
+
+/* ---------- switch ---------- */
+.switch-title{font-size:1rem;font-weight:500}
+.switch-sub{
+  font-family:var(--mono);font-size:.68rem;color:var(--muted);margin-top:.25rem;
+}
+.switch{
+  width:3.1rem;height:1.75rem;border-radius:99px;flex:0 0 auto;
+  border:1px solid var(--line);background:var(--panel-2);
+  padding:2px;display:flex;align-items:center;
+  transition:background .15s ease,border-color .15s ease;
+}
+.switch span{
+  width:1.35rem;height:1.35rem;border-radius:50%;background:var(--muted);
+  transition:transform .15s ease,background .15s ease;
+}
+.switch[aria-checked="true"]{background:var(--amber-dim);border-color:var(--amber)}
+.switch[aria-checked="true"] span{background:var(--amber);transform:translateX(1.375rem)}
+.switch:disabled{opacity:.45;cursor:default}
+
+/* ---------- buttons ---------- */
+.btn{
+  display:block;width:100%;text-align:center;
+  border-radius:12px;padding:.95rem;font-weight:700;
+  letter-spacing:-.01em;font-size:1rem;margin-bottom:.6rem;
+  border:1px solid var(--line);background:var(--panel);
+}
+.btn.primary{background:var(--amber);color:var(--ink);border-color:var(--amber)}
+.btn.danger{color:var(--alert);border-color:var(--alert)}
+.note{
+  font-family:var(--mono);font-size:.7rem;line-height:1.7;
+  color:var(--muted);margin:.2rem 0 1.4rem;
+}
+
+/* ---------- tab bar ---------- */
+.tabs{
+  display:flex;border-top:1px solid var(--line);background:var(--panel);
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.tabs button{
+  flex:1;padding:.85rem .5rem 1rem;
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);
+  border-top:2px solid transparent;margin-top:-1px;
+}
+.tabs button[aria-selected="true"]{color:var(--amber);border-top-color:var(--amber)}
+
+/* ---------- the pour screen: the signature ---------- */
+.pour{
+  position:fixed;inset:0;z-index:50;background:var(--ink);
+  display:flex;flex-direction:column;
+  padding:calc(env(safe-area-inset-top) + 1.5rem) 1.5rem
+          calc(env(safe-area-inset-bottom) + 1.5rem);
+}
+.fill{
+  position:absolute;left:0;right:0;bottom:0;
+  background:linear-gradient(180deg,rgba(233,161,59,.20),rgba(233,161,59,.06));
+  border-top:1px solid rgba(233,161,59,.5);
+  height:0;transition:height .25s linear;pointer-events:none;
+}
+.pour-inner{position:relative;flex:1;display:flex;flex-direction:column}
+.pour-step{
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--muted);
+}
+.pour-drink{
+  font-size:2rem;font-weight:800;letter-spacing:-.03em;
+  margin:.3rem 0 0;line-height:1.05;
+}
+.readout{
+  flex:1;display:flex;flex-direction:column;justify-content:center;
+  align-items:flex-start;
+}
+.readout .what{
+  font-size:1.6rem;font-weight:500;color:var(--amber);
+  letter-spacing:-.02em;margin-bottom:.4rem;
+}
+.readout .grams{
+  font-family:var(--mono);font-size:clamp(3.6rem,19vw,6.5rem);
+  font-weight:500;line-height:.9;letter-spacing:-.05em;
+  font-variant-numeric:tabular-nums;
+}
+.readout .grams small{
+  font-size:.28em;color:var(--muted);letter-spacing:.04em;margin-left:.35em;
+}
+.readout .of{
+  font-family:var(--mono);font-size:.85rem;color:var(--muted);
+  margin-top:.7rem;letter-spacing:.05em;
+}
+.pips{display:flex;gap:.3rem;margin-top:1.2rem}
+.pip{height:3px;flex:1;background:var(--line);border-radius:2px}
+.pip.done{background:var(--amber)}
+.manual{
+  border-top:1px solid var(--line);padding-top:1rem;margin-top:1rem;
+}
+.manual li{
+  font-family:var(--mono);font-size:.78rem;color:var(--paper);
+  line-height:1.6;margin-bottom:.4rem;list-style:none;
+}
+.manual li::before{content:"→ ";color:var(--amber)}
+.manual ul{margin:0;padding:0}
+.error{
+  background:rgba(210,98,74,.12);border:1px solid var(--alert);
+  border-radius:12px;padding:.9rem 1rem;color:var(--paper);
+  font-family:var(--mono);font-size:.78rem;line-height:1.6;margin-bottom:1rem;
+}
+.toast{
+  position:fixed;left:1.25rem;right:1.25rem;bottom:5.5rem;z-index:80;
+  background:var(--panel-2);border:1px solid var(--alert);border-radius:12px;
+  padding:.8rem 1rem;font-family:var(--mono);font-size:.75rem;line-height:1.5;
+}
+@media(prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="head">
+    <h1>Bar Bot</h1>
+    <span class="chip hidden" id="mock-chip">Mock</span>
+    <div class="scale-read">TRAY <b id="weight">—</b></div>
+  </header>
+
+  <!-- DRINKS -->
+  <main class="view" id="view-drinks">
+    <p class="eyebrow">Ready to pour</p>
+    <div class="grid" id="ready"></div>
+    <p class="eyebrow spaced" id="missing-head">Needs a bottle change</p>
+    <div class="grid" id="missing"></div>
+  </main>
+
+  <!-- BOTTLES -->
+  <main class="view hidden" id="view-bottles">
+    <p class="eyebrow">What's on each line</p>
+    <div id="bottle-rows"></div>
+    <button class="btn primary" id="save-bottles">Save lines</button>
+    <p class="note">
+      Density converts millilitres into grams so the scale knows when to stop.
+      Spirits 0.94 · liqueurs 1.06 · juice 1.04 · syrup 1.28.<br>
+      Prime a line after every bottle change, or the first drink comes up short.
+    </p>
+  </main>
+
+  <!-- CARE -->
+  <main class="view hidden" id="view-care">
+    <p class="eyebrow">End of the night</p>
+    <button class="btn primary" id="clean">Run clean cycle</button>
+    <p class="note">
+      Drop all eight tubes into a jug of warm water. The pumps run for 25 seconds,
+      pause, then you lift the tubes out and it purges the water through.
+      Do this every session — sugar syrup sets like glue.
+    </p>
+
+    <p class="eyebrow spaced">Scale</p>
+    <button class="btn" id="tare">Zero the scale</button>
+    <p class="note">Clear the tray first. This sets the empty reading.</p>
+    <button class="btn" id="calibrate">Calibrate with a known weight</button>
+    <p class="note">
+      Zero it, then put something you know the weight of on the tray —
+      a 500ml bottle of water is 500g, near enough.
+    </p>
+
+    <p class="eyebrow spaced">Mode</p>
+    <div class="row">
+      <div class="fields">
+        <div class="switch-title">Mock mode</div>
+        <div class="switch-sub" id="mock-sub">—</div>
+      </div>
+      <button class="switch" id="mock-toggle" role="switch"
+              aria-checked="false" aria-label="Mock mode"><span></span></button>
+    </div>
+    <p class="note">
+      On, the pumps and the scale are pretend — drinks pour on screen and
+      nothing moves, so you can show someone how it works with no bottles
+      attached. Off, it drives the real hardware. The choice sticks across
+      restarts and updates.
+    </p>
+
+    <p class="eyebrow spaced">Everything off</p>
+    <button class="btn danger" id="killall">Stop all pumps</button>
+  </main>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-view="drinks">Drinks</button>
+    <button role="tab" aria-selected="false" data-view="bottles">Bottles</button>
+    <button role="tab" aria-selected="false" data-view="care">Care</button>
+  </nav>
+</div>
+
+<!-- POUR OVERLAY -->
+<div class="pour hidden" id="pour">
+  <div class="fill" id="fill"></div>
+  <div class="pour-inner">
+    <div class="pour-step" id="p-step">Standing by</div>
+    <h2 class="pour-drink" id="p-drink"></h2>
+
+    <div class="readout">
+      <div class="what" id="p-what"></div>
+      <div class="grams"><span id="p-now">0</span><small>g</small></div>
+      <div class="of" id="p-of"></div>
+    </div>
+
+    <div id="p-error"></div>
+    <div class="pips" id="p-pips"></div>
+    <div class="manual hidden" id="p-manual"><ul></ul></div>
+    <button class="btn danger" id="p-stop" style="margin-top:1.2rem">Stop</button>
+    <button class="btn primary hidden" id="p-done" style="margin-top:1.2rem">Done</button>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let state = null, poll = null, lastBusy = false;
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button')
+      .forEach(x => x.setAttribute('aria-selected', x === b));
+    ['drinks','bottles','care'].forEach(v =>
+      $('#view-' + v).classList.toggle('hidden', v !== b.dataset.view));
+  };
+});
+
+/* ---------- talking to the Pi ---------- */
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body || {})
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'That did not work.');
+  return data;
+}
+
+function toast(message) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = message;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+
+/* ---------- drink list ---------- */
+function drinkCard(recipe) {
+  const pours = recipe.ingredients
+    .filter(i => !i.manual)
+    .map(i => `${i.ingredient} <em>${i.ml}</em>`).join(' · ');
+  const card = document.createElement('button');
+  card.className = 'card' + (recipe.available ? '' : ' out');
+  card.innerHTML =
+    `<h2>${recipe.name}</h2><div class="pour-list">${pours}</div>` +
+    (recipe.manual_steps.length ? `<div class="tag">+${recipe.manual_steps.length} by hand</div>` : '');
+  if (recipe.available) {
+    card.onclick = () => post('/api/pour', {id: recipe.id}).catch(e => toast(e.message));
+  } else {
+    card.disabled = true;
+  }
+  return card;
+}
+
+function renderDrinks() {
+  const ready = $('#ready'), missing = $('#missing');
+  ready.innerHTML = ''; missing.innerHTML = '';
+  state.recipes.forEach(r => (r.available ? ready : missing).appendChild(drinkCard(r)));
+  const none = missing.children.length === 0;
+  $('#missing-head').classList.toggle('hidden', none);
+  if (!ready.children.length) {
+    ready.innerHTML = '<p class="note">No drinks match what\'s loaded. ' +
+      'Check the Bottles tab.</p>';
+  }
+}
+
+/* ---------- bottle setup ---------- */
+function renderBottles() {
+  const wrap = $('#bottle-rows');
+  if (wrap.dataset.dirty === '1') return;   // don't stomp on typing
+  wrap.innerHTML = '';
+  for (let line = 1; line <= state.lines; line++) {
+    const b = state.bottles.find(x => x.line === line) || {line};
+    const pct = b.bottle_ml ? Math.max(0, Math.min(100, 100 * (b.remaining_ml || 0) / b.bottle_ml)) : 0;
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `
+      <div class="line-no">${line}</div>
+      <div class="fields">
+        <input data-k="ingredient" value="${b.ingredient || ''}" placeholder="Empty — nothing loaded">
+        <div class="sub">
+          <label>density <input data-k="density" value="${b.density ?? 0.94}" inputmode="decimal"></label>
+          <label>left <input data-k="remaining_ml" value="${b.remaining_ml ?? ''}" inputmode="numeric">ml</label>
+          <label>of <input data-k="bottle_ml" value="${b.bottle_ml ?? 700}" inputmode="numeric">ml</label>
+        </div>
+      </div>
+      <div class="level ${pct < 12 ? 'low' : ''}"><span style="height:${pct}%"></span></div>
+      <button class="mini" data-prime="${line}">Prime</button>`;
+    row.querySelectorAll('input').forEach(i => {
+      i.oninput = () => { wrap.dataset.dirty = '1'; };
+    });
+    row.querySelector('[data-prime]').onclick = () =>
+      post('/api/prime', {line}).catch(e => toast(e.message));
+    wrap.appendChild(row);
+  }
+}
+
+$('#save-bottles').onclick = async () => {
+  const bottles = [...$('#bottle-rows').children].map((row, i) => {
+    const get = k => row.querySelector(`[data-k="${k}"]`).value.trim();
+    const num = (k, d) => { const v = parseFloat(get(k)); return isNaN(v) ? d : v; };
+    return {
+      line: i + 1,
+      ingredient: get('ingredient') || null,
+      density: num('density', 0.94),
+      bottle_ml: num('bottle_ml', 700),
+      remaining_ml: num('remaining_ml', 700),
+      overshoot_g: (state.bottles.find(b => b.line === i + 1) || {}).overshoot_g ?? 1.0
+    };
+  });
+  try {
+    await post('/api/bottles', {bottles});
+    $('#bottle-rows').dataset.dirty = '0';
+    toast('Lines saved. Prime anything you changed.');
+  } catch (e) { toast(e.message); }
+};
+
+/* ---------- care ---------- */
+$('#clean').onclick = () => post('/api/clean').catch(e => toast(e.message));
+$('#killall').onclick = () => post('/api/stop').then(() => toast('All pumps off.'));
+$('#tare').onclick = () => post('/api/tare')
+  .then(() => toast('Zeroed.')).catch(e => toast(e.message));
+$('#calibrate').onclick = () => {
+  const grams = prompt('How much does the thing on the tray weigh, in grams?');
+  if (!grams) return;
+  post('/api/calibrate', {grams: parseFloat(grams)})
+    .then(() => toast('Calibrated.')).catch(e => toast(e.message));
+};
+
+/* ---------- mock mode ---------- */
+$('#mock-toggle').onclick = async () => {
+  const btn = $('#mock-toggle');
+  const want = btn.getAttribute('aria-checked') !== 'true';
+  btn.disabled = true;                     // and so the poll leaves it alone
+  btn.setAttribute('aria-checked', want);
+  try {
+    const r = await post('/api/mock', {mock: want});
+    toast(r.mock ? 'Mock mode on. Nothing will actually pour.'
+                 : 'Mock mode off. The pumps are live.');
+  } catch (e) {
+    btn.setAttribute('aria-checked', !want);
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+  tick();
+};
+
+function renderMode() {
+  const on = !!state.mock;
+  const btn = $('#mock-toggle');
+  if (!btn.disabled) btn.setAttribute('aria-checked', on);
+  $('#mock-chip').classList.toggle('hidden', !on);
+  $('#mock-sub').textContent = on
+    ? 'Simulated. Nothing will actually pour.'
+    : 'Live. The pumps will run for real.';
+}
+
+/* ---------- pour overlay ---------- */
+
+/* The overlay is driven by the poll, so hiding it isn't enough on its own —
+   the next tick would put it straight back while the finished status is still
+   sitting there. Instead we note which job was dismissed and keep it hidden
+   until the status moves on to something else. */
+let dismissedJob = null;
+const jobKey = s => [s.job, s.drink, s.finished_at || '', s.error || ''].join('|');
+
+$('#p-stop').onclick = () => post('/api/stop');
+$('#p-done').onclick = () => {
+  if (state) dismissedJob = jobKey(state.status);
+  $('#pour').classList.add('hidden');
+};
+
+function renderPour(s) {
+  if (s.busy) dismissedJob = null;   // something new started
+  const recent = s.finished_at && Date.now()/1000 - s.finished_at < 30;
+  const show = (s.busy || recent || s.error) && jobKey(s) !== dismissedJob;
+  $('#pour').classList.toggle('hidden', !show);
+  if (!show) return;
+
+  $('#p-step').textContent = s.step || '';
+  $('#p-drink').textContent = s.drink || (s.job === 'clean' ? 'Cleaning' : 'Priming');
+  $('#p-what').textContent = s.ingredient || '';
+  $('#p-now').textContent = (s.poured_g || 0).toFixed(1);
+  $('#p-of').textContent = s.target_g ? `of ${s.target_g.toFixed(1)} g` : '';
+
+  const pct = s.target_g ? Math.min(100, 100 * s.poured_g / s.target_g) : 0;
+  $('#fill').style.height = pct + '%';
+
+  const pips = $('#p-pips');
+  pips.innerHTML = '';
+  for (let i = 0; i < (s.steps_total || 0); i++) {
+    const p = document.createElement('div');
+    p.className = 'pip' + (i < s.steps_done ? ' done' : '');
+    pips.appendChild(p);
+  }
+
+  $('#p-error').innerHTML = s.error ? `<div class="error">${s.error}</div>` : '';
+
+  const manual = $('#p-manual');
+  const finished = !s.busy && s.steps_total && s.steps_done >= s.steps_total;
+  if (finished && s.manual && s.manual.length) {
+    manual.classList.remove('hidden');
+    manual.querySelector('ul').innerHTML = s.manual.map(m => `<li>${m}</li>`).join('');
+  } else {
+    manual.classList.add('hidden');
+  }
+
+  $('#p-stop').classList.toggle('hidden', !s.busy);
+  $('#p-done').classList.toggle('hidden', s.busy);
+}
+
+/* ---------- polling ---------- */
+async function tick() {
+  try {
+    const r = await fetch('/api/state');
+    state = await r.json();
+    $('#weight').textContent =
+      state.weight_g === null ? 'no reading' : state.weight_g.toFixed(1) + ' g';
+    renderDrinks();
+    renderBottles();
+    renderMode();
+    renderPour(state.status);
+    schedule(state.status.busy ? 150 : 700);
+  } catch (e) {
+    $('#weight').textContent = 'offline';
+    schedule(2000);
+  }
+}
+function schedule(ms) { clearTimeout(poll); poll = setTimeout(tick, ms); }
+tick();
+</script>
+</body>
+</html>
