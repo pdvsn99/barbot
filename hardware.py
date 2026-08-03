@@ -18,20 +18,18 @@ import collections
 # ---------------------------------------------------------------------------
 # Set this to False once you're running on the Pi with hardware attached.
 #
-# On the Pi, don't edit this line directly — it lives in git and a future
-# `git pull` would reset it back to True. Instead, create a file called
-# hardware_local.py next to this one containing just:
+# On the Pi, don't edit this file's settings directly — it lives in git and a
+# future `git pull` would reset them. Instead, create a file called
+# hardware_local.py next to this one with whichever of these you need to
+# override, for example:
 #
 #     MOCK = False
+#     ACTIVE_LOW = False
 #
-# That file is gitignored, so it survives updates.
+# That file is gitignored, so it survives updates. Restart test_app.py or
+# barbot after changing it — Python only reads it when the process starts.
 # ---------------------------------------------------------------------------
 MOCK = True
-
-try:
-    from hardware_local import MOCK  # noqa: F811
-except ImportError:
-    pass
 
 # BCM pin numbers, one per pump line. Line 1 is the first in this list.
 # These avoid the I2C, SPI and UART pins so you keep those free.
@@ -43,8 +41,14 @@ HX711_CLOCK_PIN = 21
 
 # Most cheap relay boards are ACTIVE LOW: pulling the pin low turns the relay
 # on. MOSFET boards are usually active high. If your pumps run when they should
-# be idle, flip this.
+# be idle, flip this. If they never run at all, that's the same mismatch the
+# other way round — flip it either way.
 ACTIVE_LOW = True
+
+try:
+    from hardware_local import *  # noqa: F401,F403
+except ImportError:
+    pass
 
 
 # ---------------------------------------------------------------------------
