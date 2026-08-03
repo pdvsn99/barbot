@@ -1,5 +1,6 @@
 calibration.json
 bottles.json
-settings.json
+.bad-commit
+hardware_local.py
 __pycache__/
 *.pyc
