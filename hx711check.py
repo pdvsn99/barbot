@@ -1,13 +1,20 @@
 """
-hx711soak.py — how often do the readings go bad on their own?
+hx711fast.py — the same read, done fast enough that the chip keeps up.
 
-Touch nothing while this runs. No weight, no hands, no nudging the wires.
-It takes 100 readings and counts how many come back corrupted.
+gpiozero takes tens of microseconds per pin write. The HX711 switches itself
+off if the clock line stays high for more than 60 of them, so most reads were
+being cut short by the chip powering down halfway through. This talks to
+lgpio directly instead, which is a microsecond or two per write.
 
-    python3 hx711soak.py
+Run it and don't touch anything:
+
+    python3 hx711fast.py
+
+It reports how many readings survive, and how much they wander.
 """
 
 import sys
+import gc
 import time
 import statistics
 
@@ -16,44 +23,91 @@ CLOCK_PIN = 21
 SAMPLES = 100
 
 try:
-    from gpiozero import DigitalOutputDevice, DigitalInputDevice
+    import lgpio
 except ImportError:
-    sys.exit("gpiozero isn't installed.  sudo apt install python3-gpiozero")
-
-clk = DigitalOutputDevice(CLOCK_PIN)
-dat = DigitalInputDevice(DATA_PIN)
-clk.off()
+    sys.exit("lgpio isn't installed.  sudo apt install python3-lgpio")
 
 
-def read_raw(timeout=1.0):
+def open_chip():
+    """Pi 5 numbers its gpiochip differently to earlier models."""
+    last = None
+    for n in (0, 4):
+        try:
+            return lgpio.gpiochip_open(n)
+        except Exception as e:
+            last = e
+    sys.exit("Couldn't open a gpiochip: %s" % last)
+
+
+chip = open_chip()
+lgpio.gpio_claim_output(chip, CLOCK_PIN, 0)
+lgpio.gpio_claim_input(chip, DATA_PIN)
+
+write = lgpio.gpio_write      # bound locally — attribute lookup costs time
+read = lgpio.gpio_read
+
+
+def reset():
+    """Hold the clock high long enough to power the chip down, then wake it.
+
+    This is the documented way back to a known state after a dropped read.
+    """
+    write(chip, CLOCK_PIN, 1)
+    time.sleep(0.0001)
+    write(chip, CLOCK_PIN, 0)
+    time.sleep(0.0001)
+
+
+def ready(timeout=1.0):
     deadline = time.time() + timeout
-    while dat.value == 1:
+    while read(chip, DATA_PIN) == 1:
         if time.time() > deadline:
-            return None
+            return False
         time.sleep(0.001)
+    return True
 
-    value = 0
-    for _ in range(24):
-        clk.on()
-        clk.off()
-        value = (value << 1) | dat.value
 
-    clk.on()
-    clk.off()
+def read_raw():
+    """One 24-bit reading, or None if the chip wasn't ready."""
+    if not ready():
+        return None
+
+    # The 24-bit loop must not be interrupted. A collection pause here is
+    # long enough for the chip to power itself down mid-read.
+    gc.disable()
+    try:
+        value = 0
+        for _ in range(24):
+            write(chip, CLOCK_PIN, 1)
+            write(chip, CLOCK_PIN, 0)
+            value = (value << 1) | read(chip, DATA_PIN)
+        write(chip, CLOCK_PIN, 1)     # 25th pulse: channel A, gain 128
+        write(chip, CLOCK_PIN, 0)
+    finally:
+        gc.enable()
 
     if value & 0x800000:
         value -= 0x1000000
     return value
 
 
-print("Taking %d readings. Don't touch anything." % SAMPLES)
+def read_valid(tries=5):
+    """A reading that isn't obviously corrupt."""
+    for _ in range(tries):
+        v = read_raw()
+        if v is not None and v not in (-1, 0) and abs(v) < 0x7FFFFF:
+            return v
+        reset()
+    return None
 
-good, bad, timeouts = [], 0, 0
+
+print("Taking %d readings. Don't touch anything." % SAMPLES)
+reset()
+
+good, bad = [], 0
 for i in range(SAMPLES):
-    v = read_raw()
+    v = read_valid()
     if v is None:
-        timeouts += 1
-    elif v in (-1, 0):
         bad += 1
     else:
         good.append(v)
@@ -61,36 +115,33 @@ for i in range(SAMPLES):
         print("   %d..." % (i + 1))
     time.sleep(0.02)
 
-clk.close()
-dat.close()
+lgpio.gpio_free(chip, CLOCK_PIN)
+lgpio.gpio_free(chip, DATA_PIN)
+lgpio.gpiochip_close(chip)
 
 print("\n" + "-" * 52)
-print("Good readings:   %d" % len(good))
-print("Corrupted:       %d" % bad)
-print("Timed out:       %d" % timeouts)
+print("Good readings: %d" % len(good))
+print("Gave up on:    %d" % bad)
 
-if good:
-    spread = max(good) - min(good)
-    print("Range at rest:   %s to %s" % (format(min(good), ",d"), format(max(good), ",d")))
-    print("Spread:          %s counts" % format(spread, ",d"))
-    if len(good) > 2:
-        print("Std deviation:   %s counts" % format(int(statistics.stdev(good)), ",d"))
+if not good:
+    print("\nStill nothing usable. That points away from timing now.")
+    print("Check the HX711 is on 3.3V, and that the load cell's four wires")
+    print("are in E+ E- A+ A- rather than the Pi-side pads.")
+    sys.exit()
 
-rate = (bad + timeouts) / SAMPLES * 100
-print("\nCorruption rate: %.0f%% with nothing touching the rig" % rate)
+spread = max(good) - min(good)
+print("Range at rest: %s to %s" % (format(min(good), ",d"), format(max(good), ",d")))
+print("Spread:        %s counts" % format(spread, ",d"))
+if len(good) > 2:
+    print("Std deviation: %s counts" % format(int(statistics.stdev(good)), ",d"))
 
 print()
-if rate > 5:
-    print("Bad readings happen on their own, so pressing the bar wasn't the")
-    print("cause. This is the clock timing — Python can't hold the pulse")
-    print("short enough, and the chip keeps dropping out.")
-    print("\nFixable in software. Tell me this number and I'll rewrite the")
-    print("reader to resync and retry.")
-elif good and (max(good) - min(good)) > 5000:
-    print("Readings are clean but very noisy for an untouched bar.")
-    print("Check the load cell wires are firmly in the screw terminals, and")
-    print("that the HX711 is on 3.3V rather than 5V.")
+if spread < 2000:
+    print("That's a working scale. Steady enough to weigh a drink.")
+    print("Say the word and I'll fold this reader into bench.py.")
+elif spread < 20000:
+    print("Much better, but still noisier than it should be.")
+    print("Usually means the load cell wiring or a loose screw terminal.")
 else:
-    print("Rock steady while untouched. So the bad readings only appear when")
-    print("you press the bar — something moves. Check the six wires, most")
-    print("likely a dupont jumper that isn't fully seated.")
+    print("Still wandering badly. The chip is being read correctly now, so")
+    print("the remaining problem is on the load cell side of the board.")
