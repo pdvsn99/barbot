@@ -15,6 +15,7 @@ first:
 """
 
 import sys
+import gc
 import time
 import threading
 import statistics
@@ -50,13 +51,26 @@ PORT = 5001
 # GPIO
 # ---------------------------------------------------------------------------
 
+# Pumps go through gpiozero, which gives us PWM for free and isn't timing
+# critical. The load cell does not: gpiozero takes tens of microseconds per
+# pin write, and the HX711 powers itself down if the clock line stays high
+# for more than 60 of them, which corrupts the read. So the scale talks to
+# lgpio directly. They use separate pins, so the two can coexist.
 try:
-    from gpiozero import PWMOutputDevice, DigitalOutputDevice, DigitalInputDevice
+    from gpiozero import PWMOutputDevice
     from gpiozero.exc import GPIOZeroError
 except ImportError:
     sys.exit(
-        "gpiozero isn't installed, so this can't reach the pins.\n"
+        "gpiozero isn't installed, so this can't reach the pumps.\n"
         "Install it with:  sudo apt install python3-gpiozero"
+    )
+
+try:
+    import lgpio
+except ImportError:
+    sys.exit(
+        "lgpio isn't installed, so this can't read the load cell.\n"
+        "Install it with:  sudo apt install python3-lgpio"
     )
 
 
@@ -137,8 +151,11 @@ class Scale:
 
     A background thread reads the chip continuously into a small buffer, and
     everything else reads the median of that buffer. The chip only produces
-    about ten readings a second, so reading it directly would block; and
-    bit-banging in Python throws the odd garbage value, which the median drops.
+    about ten readings a second, so reading it directly would block.
+
+    Reads that come back corrupt are discarded and retried rather than
+    averaged in — a dropped read returns all-ones, which would drag the
+    median a long way if it were allowed through.
     """
 
     def __init__(self):
@@ -146,12 +163,32 @@ class Scale:
         self.scale_factor = 1.0  # raw units per gram, set by calibrate()
         self.calibrated = False
         self.last_error = None
+        self.discarded = 0       # corrupt reads thrown away since startup
         self._recent = collections.deque(maxlen=20)
         self._started = False
 
-        self._clk = DigitalOutputDevice(HX711_CLOCK_PIN)
-        self._dat = DigitalInputDevice(HX711_DATA_PIN)
-        self._clk.off()
+        self._chip = self._open_chip()
+        lgpio.gpio_claim_output(self._chip, HX711_CLOCK_PIN, 0)
+        lgpio.gpio_claim_input(self._chip, HX711_DATA_PIN)
+        self._reset()
+
+    @staticmethod
+    def _open_chip():
+        """Pi 5 numbers its gpiochip differently to earlier models."""
+        last = None
+        for n in (0, 4):
+            try:
+                return lgpio.gpiochip_open(n)
+            except Exception as e:
+                last = e
+        sys.exit("Couldn't open a gpiochip for the load cell: %s" % last)
+
+    def _reset(self):
+        """Power the chip down and back up — the way back from a dropped read."""
+        lgpio.gpio_write(self._chip, HX711_CLOCK_PIN, 1)
+        time.sleep(0.0001)
+        lgpio.gpio_write(self._chip, HX711_CLOCK_PIN, 0)
+        time.sleep(0.0001)
 
     def start(self):
         if self._started:
@@ -161,8 +198,13 @@ class Scale:
         def loop():
             while True:
                 try:
-                    self._recent.append(self._read_raw_once())
-                    self.last_error = None
+                    v = self._read_valid()
+                    if v is None:
+                        self.last_error = "No reply from the load cell. Check the wiring."
+                        time.sleep(0.2)
+                    else:
+                        self._recent.append(v)
+                        self.last_error = None
                 except Exception as e:
                     self.last_error = str(e)
                     time.sleep(0.2)
@@ -175,26 +217,45 @@ class Scale:
             time.sleep(0.05)
 
     def _read_raw_once(self):
+        """One 24-bit reading, or None if the chip never signalled ready."""
+        chip, clk, dat = self._chip, HX711_CLOCK_PIN, HX711_DATA_PIN
+        write, read = lgpio.gpio_write, lgpio.gpio_read
+
         # The chip pulls the data line low when a reading is ready.
         deadline = time.time() + 1.0
-        while self._dat.value == 1:
+        while read(chip, dat) == 1:
             if time.time() > deadline:
-                raise RuntimeError("No reply from the load cell. Check the wiring.")
+                return None
             time.sleep(0.001)
 
-        value = 0
-        for _ in range(24):
-            self._clk.on()
-            self._clk.off()
-            value = (value << 1) | self._dat.value
-
-        # One extra pulse picks channel A at gain 128 for the next reading.
-        self._clk.on()
-        self._clk.off()
+        # The 24-bit loop must not be interrupted. A collection pause here is
+        # long enough for the chip to power itself down mid-read.
+        gc.disable()
+        try:
+            value = 0
+            for _ in range(24):
+                write(chip, clk, 1)
+                write(chip, clk, 0)
+                value = (value << 1) | read(chip, dat)
+            # One extra pulse picks channel A at gain 128 for the next reading.
+            write(chip, clk, 1)
+            write(chip, clk, 0)
+        finally:
+            gc.enable()
 
         if value & 0x800000:          # 24-bit two's complement
             value -= 0x1000000
         return float(value)
+
+    def _read_valid(self, tries=5):
+        """A reading that isn't obviously corrupt. None if all attempts fail."""
+        for _ in range(tries):
+            v = self._read_raw_once()
+            if v is not None and v not in (-1.0, 0.0) and abs(v) < 0x7FFFFF:
+                return v
+            self.discarded += 1
+            self._reset()
+        return None
 
     def read_raw(self, samples=5):
         if not self._started:
@@ -222,11 +283,18 @@ class Scale:
         return self.scale_factor
 
     def release(self):
-        for dev in (getattr(self, "_clk", None), getattr(self, "_dat", None)):
+        chip = getattr(self, "_chip", None)
+        if chip is None:
+            return
+        for pin in (HX711_CLOCK_PIN, HX711_DATA_PIN):
             try:
-                dev.close()
+                lgpio.gpio_free(chip, pin)
             except Exception:
                 pass
+        try:
+            lgpio.gpiochip_close(chip)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +664,8 @@ async function poll() {
     }
 
     document.getElementById('mode').textContent =
-      COUNT + ' lines · ' + (d.calibrated ? 'calibrated' : 'not calibrated');
+      COUNT + ' lines · ' + (d.calibrated ? 'calibrated' : 'not calibrated') +
+      (d.discarded > 0 ? ' · ' + d.discarded + ' reads dropped' : '');
 
     if (d.active_high !== activeHigh) { activeHigh = d.active_high; paintPolarity(); }
 
@@ -652,6 +721,7 @@ def state():
         "grams": grams,
         "error": err,
         "calibrated": scale.calibrated,
+        "discarded": scale.discarded,
         "pumps": pumps.states(),
         "pins": pumps.pins,
         "active_high": pumps.active_high,
