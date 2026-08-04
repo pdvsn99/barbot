@@ -1,19 +1,19 @@
 """
-hx711check.py — works out why the scale isn't reading.
+hx711soak.py — how often do the readings go bad on their own?
 
-Run it, then press the free end of the bar with a finger when it tells you to.
+Touch nothing while this runs. No weight, no hands, no nudging the wires.
+It takes 100 readings and counts how many come back corrupted.
 
-    python3 hx711check.py
-
-It prints raw counts straight from the chip, with no zeroing or calibration in
-the way, and then tells you which half of the setup is at fault.
+    python3 hx711soak.py
 """
 
 import sys
 import time
+import statistics
 
 DATA_PIN = 20
 CLOCK_PIN = 21
+SAMPLES = 100
 
 try:
     from gpiozero import DigitalOutputDevice, DigitalInputDevice
@@ -26,7 +26,6 @@ clk.off()
 
 
 def read_raw(timeout=1.0):
-    """One 24-bit reading. Returns None if the chip never says it's ready."""
     deadline = time.time() + timeout
     while dat.value == 1:
         if time.time() > deadline:
@@ -47,80 +46,51 @@ def read_raw(timeout=1.0):
     return value
 
 
-def sample(n, label):
-    print("\n%s" % label)
-    readings = []
-    for _ in range(n):
-        v = read_raw()
-        readings.append(v)
-        print("   %s" % ("no response" if v is None else format(v, ">10,d")))
-        time.sleep(0.1)
-    return readings
+print("Taking %d readings. Don't touch anything." % SAMPLES)
 
-
-print("Data pin  BCM %d   (physical pin 38)" % DATA_PIN)
-print("Clock pin BCM %d   (physical pin 40)" % CLOCK_PIN)
-
-print("\nResting level of the data line: %s"
-      % ("high" if dat.value else "low"))
-
-rest = sample(8, "Reading with nothing on the platform:")
-
-input("\nNow press down on the free end of the bar and hold it. Press enter.")
-load = sample(8, "Reading under load:")
+good, bad, timeouts = [], 0, 0
+for i in range(SAMPLES):
+    v = read_raw()
+    if v is None:
+        timeouts += 1
+    elif v in (-1, 0):
+        bad += 1
+    else:
+        good.append(v)
+    if (i + 1) % 20 == 0:
+        print("   %d..." % (i + 1))
+    time.sleep(0.02)
 
 clk.close()
 dat.close()
 
-# ---------------------------------------------------------------------------
-
 print("\n" + "-" * 52)
+print("Good readings:   %d" % len(good))
+print("Corrupted:       %d" % bad)
+print("Timed out:       %d" % timeouts)
 
-if all(v is None for v in rest):
-    print("The chip never signalled that a reading was ready.")
-    print("The data line is stuck high, so nothing is driving it.")
-    print("\n  - Check DT is on physical pin 38")
-    print("  - Check VCC has 3.3V on it and GND is connected")
-    sys.exit()
+if good:
+    spread = max(good) - min(good)
+    print("Range at rest:   %s to %s" % (format(min(good), ",d"), format(max(good), ",d")))
+    print("Spread:          %s counts" % format(spread, ",d"))
+    if len(good) > 2:
+        print("Std deviation:   %s counts" % format(int(statistics.stdev(good)), ",d"))
 
-good_rest = [v for v in rest if v is not None]
-good_load = [v for v in load if v is not None]
-
-if all(v == 0 for v in good_rest):
-    print("Every reading came back as exactly zero.")
-    print("That is not a weight of zero — it is no data at all. The clock")
-    print("pulses are going out and nothing is coming back.")
-    print("\n  - Most likely: DT or SCK on the wrong header pin, or swapped")
-    print("  - Or: the HX711 has no power. Check 3.3V across VCC and GND")
-    sys.exit()
-
-if all(v == -1 for v in good_rest):
-    print("Every reading came back as -1, which is 24 bits all set high.")
-    print("The data line is being held high the whole time.")
-    print("\n  - Check the GND wire between the HX711 and the Pi")
-    sys.exit()
-
-spread = max(good_rest) - min(good_rest)
-shift = (sum(good_load) / len(good_load)) - (sum(good_rest) / len(good_rest))
-
-print("Resting counts:  %s to %s   (noise spread %s)"
-      % (format(min(good_rest), ",d"), format(max(good_rest), ",d"),
-         format(spread, ",d")))
-print("Shift under load: %s counts" % format(int(shift), ",d"))
+rate = (bad + timeouts) / SAMPLES * 100
+print("\nCorruption rate: %.0f%% with nothing touching the rig" % rate)
 
 print()
-if abs(shift) < spread * 3:
-    print("The chip is talking, but pressing the bar barely changed anything.")
-    print("So the HX711 side is fine and the load cell side is not.")
-    print("\n  - The bar cannot flex. One end must be bolted down and the")
-    print("    other free to move, with an air gap between them.")
-    print("  - Or the four load cell wires are on the wrong pads. They go")
-    print("    to E+ E- A+ A-, not to the pads on the Pi side of the board.")
-elif shift < 0:
-    print("Working, but counting backwards — pressing down lowers the value.")
-    print("The bar is mounted the wrong way round for its arrow.")
-    print("\n  - Swap which end is bolted to the base, or leave it and let")
-    print("    calibrate() sort the sign out for you.")
+if rate > 5:
+    print("Bad readings happen on their own, so pressing the bar wasn't the")
+    print("cause. This is the clock timing — Python can't hold the pulse")
+    print("short enough, and the chip keeps dropping out.")
+    print("\nFixable in software. Tell me this number and I'll rewrite the")
+    print("reader to resync and retry.")
+elif good and (max(good) - min(good)) > 5000:
+    print("Readings are clean but very noisy for an untouched bar.")
+    print("Check the load cell wires are firmly in the screw terminals, and")
+    print("that the HX711 is on 3.3V rather than 5V.")
 else:
-    print("This is all working. The chip reads, and load moves it the right way.")
-    print("\n  - Run bench.py, set zero, then calibrate with a known weight.")
+    print("Rock steady while untouched. So the bad readings only appear when")
+    print("you press the bar — something moves. Check the six wires, most")
+    print("likely a dupont jumper that isn't fully seated.")
